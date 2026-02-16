@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-class ImfWorkingPapersRepecBridge extends XPathAbstract {
+class ImfWorkingPapersRepecBridge extends BridgeAbstract {
 
     const NAME = 'IMF Working Papers - RePEc';
     const URI = 'https://ideas.repec.org/s/imf/imfwpa.html';
@@ -11,12 +11,6 @@ class ImfWorkingPapersRepecBridge extends XPathAbstract {
 
     const PARAMETERS = [
         [
-            'year' => [
-                'name' => 'Année',
-                'type' => 'text',
-                'exampleValue' => '2026',
-                'title' => 'Filtrer par année (ex: 2026). Laisser vide pour 2025+2026',
-            ],
             'limit' => [
                 'name' => 'Limite',
                 'type' => 'number',
@@ -26,63 +20,76 @@ class ImfWorkingPapersRepecBridge extends XPathAbstract {
         ]
     ];
 
-    // Source HTML
-    const FEED_SOURCE_URL = 'https://ideas.repec.org/s/imf/imfwpa.html';
-
-    // Items = <p> après les h3 2025/2026
-    const XPATH_EXPRESSION_ITEM = "//h3[contains(., '2026') or contains(., '2025')]/following-sibling::p[position() <= 50]";
-
-    // Titre (numéro + titre)
-    const XPATH_EXPRESSION_ITEM_TITLE = ".//strong/text()";
-
-    // Auteurs
-    const XPATH_EXPRESSION_ITEM_AUTHOR = ".//em/text()";
-
-    // Lien
-    const XPATH_EXPRESSION_ITEM_URI = "./preceding-sibling::h3[1]/a/@href";
-
-    // Date (année, on la transformera dans formatItemTimestamp)
-    const XPATH_EXPRESSION_ITEM_TIMESTAMP = "./preceding-sibling::h3[1]/text()";
-
-    // Description: on réutilise le titre + auteurs
-    const XPATH_EXPRESSION_ITEM_CONTENT = ".//strong/text()";
-
-    public function formatItemUri($uri) {
-        $uri = trim($uri);
-        if ($uri === '') {
-            return '';
+    public function collectData() {
+        $html = getSimpleHTMLDOM(self::URI);
+        
+        // Recherche des titres h3 contenant 2026 ou 2025
+        $years = $html->find('h3');
+        $count = 0;
+        $limit = $this->getInput('limit') ?? 50;
+        
+        foreach ($years as $yearH3) {
+            $yearText = $yearH3->plaintext;
+            
+            // Vérifier si c'est 2026 ou 2025
+            if (!preg_match('/(2026|2025)/', $yearText, $match)) {
+                continue;
+            }
+            
+            $year = $match[1];
+            
+            // Récupérer tous les <p> qui suivent ce h3
+            $nextSibling = $yearH3->next_sibling();
+            
+            while ($nextSibling && $nextSibling->tag === 'p' && $count < $limit) {
+                $item = [];
+                
+                // Titre et numéro (dans <strong>)
+                $strong = $nextSibling->find('strong', 0);
+                if ($strong) {
+                    $item['title'] = trim($strong->plaintext);
+                }
+                
+                // Auteurs (dans <em>)
+                $em = $nextSibling->find('em', 0);
+                if ($em) {
+                    $author = trim($em->plaintext);
+                    $author = preg_replace('/^by\s+/i', '', $author);
+                    $item['author'] = $author;
+                }
+                
+                // Lien (dans le h3 précédent)
+                $link = $yearH3->find('a', 0);
+                if ($link) {
+                    $href = $link->href;
+                    if (strpos($href, 'http') !== 0) {
+                        $href = 'https://ideas.repec.org' . $href;
+                    }
+                    $item['uri'] = $href;
+                }
+                
+                // Date (utiliser l'année)
+                $item['timestamp'] = strtotime($year . '-01-01');
+                
+                // Contenu (titre + auteur)
+                $content = $item['title'] ?? '';
+                if (!empty($item['author'])) {
+                    $content .= ' — ' . $item['author'];
+                }
+                $item['content'] = $content;
+                
+                // UID unique
+                $item['uid'] = $item['uri'] ?? md5($content . $year);
+                
+                $this->items[] = $item;
+                $count++;
+                
+                if ($count >= $limit) {
+                    return;
+                }
+                
+                $nextSibling = $nextSibling->next_sibling();
+            }
         }
-        if (str_starts_with($uri, '/')) {
-            return 'https://ideas.repec.org' . $uri;
-        }
-        if (!preg_match('~^https?://~', $uri)) {
-            return 'https://ideas.repec.org' . $uri;
-        }
-        return $uri;
-    }
-
-    public function formatItemAuthor($author) {
-        $author = trim($author);
-        return preg_replace('~^by\s+~i', '', $author);
-    }
-
-    public function formatItemTimestamp($text) {
-        $text = is_array($text) ? implode(' ', $text) : (string)$text;
-        if (preg_match('~(20[0-9]{2})~', $text, $m)) {
-            $year = $m[1];
-        } else {
-            $year = date('Y');
-        }
-        return strtotime($year . '-01-01');
-    }
-
-    public function formatItemContent($contentValues, $itemValues) {
-        $title = is_array($contentValues) ? implode(' ', $contentValues) : (string)$contentValues;
-        $author = $itemValues['author'] ?? '';
-        $author = $this->formatItemAuthor($author);
-        if ($author !== '') {
-            return $title . ' — ' . $author;
-        }
-        return $title;
     }
 }
