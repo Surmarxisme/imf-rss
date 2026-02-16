@@ -1,0 +1,42 @@
+name: IMF Working Papers RSS
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # tous les jours à 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run RSS-Bridge in Docker and generate feed
+        run: |
+          docker run -d --name rssbridge \
+            -p 8080:80 \
+            -v "$PWD/bridges":/app/bridges \
+            rssbridge/rss-bridge:latest
+
+          # Laisse à Apache/PHP le temps de démarrer
+          sleep 15
+
+          FEED_URL="http://localhost:8080/?action=display&bridge=ImfWorkingPapersRepec&format=Atom&limit=50"
+
+          mkdir -p public
+          curl -fsSL "$FEED_URL" -o public/imf-working-papers.xml
+
+          docker stop rssbridge
+          docker rm rssbridge
+
+      - name: Commit updated feed
+        run: |
+          if [ -n "$(git status --porcelain public/imf-working-papers.xml)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add public/imf-working-papers.xml
+            git commit -m "Update IMF Working Papers feed"
+            git push
+          fi
