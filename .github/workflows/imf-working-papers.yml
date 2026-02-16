@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 
 jobs:
+
+permissions:
+  contents: write
   build-feed:
     runs-on: ubuntu-latest
 
